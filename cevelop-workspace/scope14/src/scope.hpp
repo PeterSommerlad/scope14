@@ -12,9 +12,65 @@
 #include <limits> // for maxint
 #include <type_traits>
 
-#define SCOPE_NS std::experimental
+#define SCOPE_NS std { namespace experimental
+#define SCOPE_NS_END }
 
 namespace SCOPE_NS{
+namespace _v {
+template<typename T>
+constexpr auto is_nothrow_move_assignable_v=std::is_nothrow_move_assignable<T>::value;
+template<typename T>
+constexpr auto is_nothrow_move_constructible_v=std::is_nothrow_move_constructible<T>::value;
+template<typename T>
+constexpr auto is_nothrow_constructible_v=std::is_nothrow_constructible<T>::value;
+
+template<typename T>
+constexpr auto is_copy_constructible_v=std::is_copy_constructible<T>::value;
+template<typename T>
+constexpr auto is_copy_assignable_v=std::is_copy_assignable<T>::value;
+template<typename T>
+constexpr auto is_move_constructible_v=is_move_constructible<T>::value;
+template<typename T>
+constexpr auto is_pointer_v=is_pointer<T>::value;
+template<typename T>
+constexpr auto is_void_v=is_void<T>::value;
+
+// hack is_incallable that is close enough to is_invocable to be useful
+template<typename T>
+struct is_callable_impl
+{
+    typedef char yes_type[1];
+    typedef char no_type[2];
+
+    template <typename Q>
+    static yes_type& check(decltype(&Q::operator())*);
+
+    template <typename Q>
+    static no_type& check(...);
+
+    static const bool value = sizeof(check<T>(0))==sizeof(yes_type);
+};
+
+template<typename R, typename... Args>
+struct is_callable_impl<R (*)(Args...)> : std::true_type {};
+
+template<typename R, typename... Args>
+struct is_callable_impl<R (&)(Args...)> : std::true_type {};
+
+template<typename T>
+using is_callable = std::integral_constant<bool, is_callable_impl<T>::value>;
+
+
+template<typename T>
+constexpr auto is_invocable_v=is_callable<T>::value;
+
+template<typename T, typename... S>
+constexpr auto is_constructible_v=is_constructible<T,S...>::value;
+template<typename T, typename S>
+constexpr auto is_convertible_v=std::is_convertible<T,S>::value;
+
+
+}
 namespace detail {
 namespace hidden{
 
@@ -23,7 +79,7 @@ namespace hidden{
 // should this helper be standardized? // write testcase where recognizable.
 template<typename T>
 constexpr std::conditional_t<
-    std::is_nothrow_move_assignable_v<T>,
+    _v::is_nothrow_move_assignable_v<T>,
     T &&,
     T const &>
 _move_assign_if_noexcept(T &x) noexcept
@@ -32,7 +88,7 @@ _move_assign_if_noexcept(T &x) noexcept
 }
 template< class T >
 constexpr typename std::conditional<
-    !std::is_nothrow_move_constructible_v<T> && std::is_copy_constructible_v<T>,
+    !_v::is_nothrow_move_constructible_v<T> && _v::is_copy_constructible_v<T>,
     const T&,
     T&&
 >::type move_if_noexcept(T& x) noexcept;
@@ -51,7 +107,7 @@ class _box
 
 public:
     template<typename TT, typename GG,
-        typename = std::enable_if_t<std::is_constructible_v<T, TT>>>
+        typename = std::enable_if_t<_v::is_constructible_v<T, TT>>>
     explicit _box(TT &&t, GG &&guard) noexcept(noexcept(_box((T &&) t)))
       : _box(std::forward<TT>(t))
     {
@@ -86,7 +142,7 @@ class _box<T &>
     std::reference_wrapper<T> value;
 public:
     template<typename TT, typename GG,
-        typename = std::enable_if_t<std::is_convertible_v<TT, T &>>>
+        typename = std::enable_if_t<_v::is_convertible_v<TT, T &>>>
     _box(TT &&t, GG &&guard) noexcept(noexcept(static_cast<T &>((TT &&) t)))
       : value(static_cast<T &>(t))
     {
@@ -127,10 +183,10 @@ struct on_exit_policy
     }
 };
 
-
+// we cheat around by using 0 1 value of uncaught_exception() instead of the 17 uncaught_exceptions
 struct on_fail_policy
 {
-    int ec_ { std::uncaught_exceptions() };
+    int ec_ { std::uncaught_exception() }; // just an approximization
 
     void release() noexcept
     {
@@ -139,13 +195,13 @@ struct on_fail_policy
 
     bool should_execute() const noexcept
     {
-        return ec_ < std::uncaught_exceptions();
+        return ec_ < std::uncaught_exception();
     }
 };
 
 struct on_success_policy
 {
-    int ec_ { std::uncaught_exceptions() };
+    int ec_ { std::uncaught_exception() };
 
     void release() noexcept
     {
@@ -154,7 +210,7 @@ struct on_success_policy
 
     bool should_execute() const noexcept
     {
-        return ec_ >= std::uncaught_exceptions() ;
+        return ec_ >= std::uncaught_exception() ;
     }
 };
 }
@@ -227,7 +283,7 @@ struct _empty_scope_exit
 template<class EF, class Policy /*= on_exit_policy*/>
 class [[nodiscard]] basic_scope_exit :  Policy
 {
-	static_assert(std::is_invocable_v<EF>,"scope guard must be callable");
+	static_assert(_v::is_invocable_v<EF>,"scope guard must be callable");
     detail::_box<EF> exit_function;
 
 	static auto _make_failsafe(std::true_type, const void *)
@@ -243,10 +299,10 @@ class [[nodiscard]] basic_scope_exit :  Policy
     using _ctor_from = std::is_constructible<detail::_box<EF>, EFP, detail::_empty_scope_exit>;
     template<typename EFP>
 #ifndef _MSC_VER
-    using _noexcept_ctor_from = std::bool_constant<noexcept(detail::_box<EF>(std::declval<EFP>(), detail::_empty_scope_exit{}))>;
+    using _noexcept_ctor_from = std::integral_constant<bool,noexcept(detail::_box<EF>(std::declval<EFP>(), detail::_empty_scope_exit{}))>;
 #else
     // MSVC thinks that it is a function style cast
-    using _noexcept_ctor_from = std::bool_constant<noexcept(detail::_box<EF>::_box(std::declval<EFP>(), detail::_empty_scope_exit{}))>;
+    using _noexcept_ctor_from = std::integral_constant<bool,noexcept(detail::_box<EF>::_box(std::declval<EFP>(), detail::_empty_scope_exit{}))>;
 #endif
 public:
     template<typename EFP, typename = std::enable_if_t<_ctor_from<EFP>::value>>
@@ -277,11 +333,11 @@ void swap(basic_scope_exit<EF, Policy> &, basic_scope_exit<EF, Policy> &) = dele
 template<typename R, typename D>
 class unique_resource
 {
-    static_assert((std::is_move_constructible_v<R> && std::is_nothrow_move_constructible_v<R>) ||
-                  std::is_copy_constructible_v<R>,
+    static_assert((_v::is_move_constructible_v<R> && _v::is_nothrow_move_constructible_v<R>) ||
+                  _v::is_copy_constructible_v<R>,
 				  "resource must be nothrow_move_constructible or copy_constructible");
-    static_assert((std::is_move_constructible_v<R> && std::is_nothrow_move_constructible_v<D>) ||
-                  std::is_copy_constructible_v<D>,
+    static_assert((_v::is_move_constructible_v<R> && _v::is_nothrow_move_constructible_v<D>) ||
+                  _v::is_copy_constructible_v<D>,
 				  "deleter must be nothrow_move_constructible or copy_constructible");
 
 	static const unique_resource &this_; // never ODR used! Just for getting no_except() expr
@@ -290,17 +346,17 @@ class unique_resource
     detail::_box<D> deleter;
     bool execute_on_destruction { true };
 
-    static constexpr auto is_nothrow_delete_v=std::bool_constant<noexcept(std::declval<D &>()(std::declval<R &>()))>::value;
+    static constexpr auto is_nothrow_delete_v=std::integral_constant<bool, noexcept(std::declval<D &>()(std::declval<R &>()))>::value;
 
 public://should be private
     template<typename RR, typename DD,
-        typename = std::enable_if_t<std::is_constructible_v<detail::_box<R>, RR, detail::_empty_scope_exit> &&
-                                    std::is_constructible_v<detail::_box<D>, DD, detail::_empty_scope_exit>>>
+        typename = std::enable_if_t<_v::is_constructible_v<detail::_box<R>, RR, detail::_empty_scope_exit> &&
+                                    _v::is_constructible_v<detail::_box<D>, DD, detail::_empty_scope_exit>>>
     unique_resource(RR &&r, DD &&d, bool should_run)
 	noexcept(noexcept(detail::_box<R>(std::forward<RR>(r), detail::_empty_scope_exit {})) &&
 			noexcept(detail::_box<D>(std::forward<DD>(d), detail::_empty_scope_exit {})))
-      : resource{std::forward<RR>(r), scope_exit([&] {if (should_run) d(r);})}
-      , deleter{std::forward<DD>(d),  scope_exit([&, this] {if (should_run) d(get());})}
+      : resource{std::forward<RR>(r), make_scope_exit([&] {if (should_run) d(r);})}
+      , deleter{std::forward<DD>(d),  make_scope_exit([&, this] {if (should_run) d(get());})}
 	  , execute_on_destruction { should_run }
     {}
     // need help in making the factory a nice friend...
@@ -316,8 +372,8 @@ public:
 ////	[[nodiscard]]
 //    friend
 //	auto make_unique_resource_checked(MR &&r, const S &invalid, MD &&d)
-//    noexcept(std::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
-//    		std::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
+//    noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
+//    		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
 //    ->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
 //			{
 //				bool const mustrelease(r == invalid);
@@ -329,44 +385,44 @@ public:
 //;
 public:
     template<typename RR, typename DD,
-        typename = std::enable_if_t<std::is_constructible<detail::_box<R>, RR, detail::_empty_scope_exit>::value &&
-                                    std::is_constructible<detail::_box<D>, DD, detail::_empty_scope_exit>::value >
+        typename = std::enable_if_t<_v::is_constructible_v<detail::_box<R>, RR, detail::_empty_scope_exit> &&
+                                    _v::is_constructible_v<detail::_box<D>, DD, detail::_empty_scope_exit> >
     >
     unique_resource(RR &&r, DD &&d)
 	noexcept(noexcept(detail::_box<R>(std::forward<RR>(r), detail::_empty_scope_exit {})) &&
 			 noexcept(detail::_box<D>(std::forward<DD>(d), detail::_empty_scope_exit {})))
-      : resource(std::forward<RR>(r), scope_exit([&] {d(r);}))
-      , deleter(std::forward<DD>(d), scope_exit([&, this] {d(get());}))
+      : resource(std::forward<RR>(r), make_scope_exit([&] {d(r);}))
+      , deleter(std::forward<DD>(d), make_scope_exit([&, this] {d(get());}))
     {}
 	unique_resource(	unique_resource&& that)
 			noexcept(noexcept(detail::_box<R>(that.resource.move(), detail::_empty_scope_exit {})) &&
 					 noexcept(detail::_box<D>(that.deleter.move(), detail::_empty_scope_exit {})))
 		: resource(that.resource.move(), detail::_empty_scope_exit { })
-		, deleter(that.deleter.move(), scope_exit([&, this] { if (that.execute_on_destruction) that.get_deleter()(get());that.release(); }))
+		, deleter(that.deleter.move(), make_scope_exit([&, this] { if (that.execute_on_destruction) that.get_deleter()(get());that.release(); }))
 		, execute_on_destruction(std::exchange(that.execute_on_destruction, false))
 		{ }
 
 	unique_resource &operator=(unique_resource &&that) noexcept(is_nothrow_delete_v &&
-			std::is_nothrow_move_assignable_v<R> &&
-			std::is_nothrow_move_assignable_v<D>)
+			_v::is_nothrow_move_assignable_v<R> &&
+			_v::is_nothrow_move_assignable_v<D>)
 	{
-		static_assert(std::is_nothrow_move_assignable<R>::value ||
-				std::is_copy_assignable<R>::value,
+		static_assert(_v::is_nothrow_move_assignable_v<R> ||
+				_v::is_copy_assignable_v<R>,
 				"The resource must be nothrow-move assignable, or copy assignable");
-		static_assert(std::is_nothrow_move_assignable<D>::value ||
-				std::is_copy_assignable<D>::value,
+		static_assert(_v::is_nothrow_move_assignable_v<D> ||
+				_v::is_copy_assignable_v<D>,
 				"The deleter must be nothrow-move assignable, or copy assignable");
 		if (&that != this) {
 			reset();
-			if constexpr (std::is_nothrow_move_assignable_v<detail::_box<R>>)
-				if constexpr (is_nothrow_move_assignable_v<detail::_box<D>>) {
+			if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<R>>)
+				if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<D>>) {
 					resource = std::move(that.resource);
 					deleter = std::move(that.deleter);
 				} else {
 					deleter = _as_const(that.deleter);
 					resource = std::move(that.resource);
 				}
-			else if constexpr (is_nothrow_move_assignable_v<detail::_box<D>>) {
+			else if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<D>>) {
 				resource = _as_const(that.resource);
 				deleter = std::move(that.deleter);
 			} else {
@@ -395,7 +451,7 @@ public:
         noexcept(noexcept(resource.reset(std::forward<RR>(r))))
 	-> decltype(resource.reset(std::forward<RR>(r)), void())
     {
-        auto &&guard = scope_fail([&, this]{ get_deleter()(r); }); // -Wunused-variable on clang
+        auto &&guard = make_scope_fail([&, this]{ get_deleter()(r); }); // -Wunused-variable on clang
         reset();
 		resource.reset(std::forward<RR>(r));
         execute_on_destruction = true;
@@ -414,13 +470,13 @@ public:
     }
     template<typename RR=R>
     auto operator->() const noexcept//(noexcept(detail::for_noexcept_on_copy_construction(this_.get())))
-	-> std::enable_if_t<std::is_pointer_v<RR>,decltype(get())>
+	-> std::enable_if_t<_v::is_pointer_v<RR>,decltype(get())>
     {
         return get();
     }
     template<typename RR=R>
     auto operator*() const noexcept
-    	-> std::enable_if_t<std::is_pointer_v<RR> && ! std::is_void_v<std::remove_pointer_t<RR>>,
+    	-> std::enable_if_t<_v::is_pointer_v<RR> && ! _v::is_void_v<std::remove_pointer_t<RR>>,
 		std::add_lvalue_reference_t<std::remove_pointer_t<R>>>
     {
         return *get();
@@ -447,8 +503,8 @@ unique_resource(R, D, bool)
 template<typename MR, typename MD, typename S>
 [[nodiscard]]
 auto make_unique_resource_checked(MR &&r, const S &invalid, MD &&d)
-noexcept(std::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
-		std::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
+noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
+		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
 ->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
 {
 	bool const mustrelease(r == invalid);
@@ -458,7 +514,7 @@ noexcept(std::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
 
 }
 
-// end of (c) Eric Niebler part
+SCOPE_NS_END
 }
 
 
