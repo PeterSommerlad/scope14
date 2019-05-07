@@ -18,6 +18,8 @@ namespace SCOPE_NS{
 namespace detail {
 namespace hidden{
 
+// TODO: is_nothrow_assignable reimplementation
+
 // should this helper be standardized? // write testcase where recognizable.
 template<typename T>
 constexpr std::conditional_t<
@@ -171,7 +173,10 @@ struct [[nodiscard]] scope_exit : basic_scope_exit<EF, detail::on_exit_policy>{
 };
 
 template <class EF>
-scope_exit(EF) -> scope_exit<EF>;
+//scope_exit(EF) -> scope_exit<EF>;
+inline auto make_scope_exit(EF&&ef){
+	return scope_exit<std::decay_t<EF>>(std::forward<EF>(ef));
+}
 
 //template<class EF>
 //using scope_fail = basic_scope_exit<EF, detail::on_fail_policy>;
@@ -182,7 +187,10 @@ struct scope_fail : basic_scope_exit<EF, detail::on_fail_policy>{
 };
 
 template <class EF>
-scope_fail(EF) -> scope_fail<EF>;
+//scope_fail(EF) -> scope_fail<EF>;
+inline auto make_scope_fail(EF&&ef){
+	return scope_fail<std::decay_t<EF>>(std::forward<EF>(ef));
+}
 
 //template<class EF>
 //using scope_success = basic_scope_exit<EF, detail::on_success_policy>;
@@ -193,8 +201,10 @@ struct scope_success : basic_scope_exit<EF, detail::on_success_policy>{
 };
 
 template <class EF>
-scope_success(EF) -> scope_success<EF>;
-
+//scope_success(EF) -> scope_success<EF>;
+inline auto make_scope_success(EF&&ef){
+	return scope_success<std::decay_t<EF>>(std::forward<EF>(ef));
+}
 
 
 namespace detail{
@@ -422,12 +432,18 @@ public:
 };
 
 template<typename R, typename D>
-unique_resource(R, D)
--> unique_resource<R, D>;
-template<typename R, typename D>
+//unique_resource(R, D)
+//-> unique_resource<R, D>;
+[[nodiscard]]
+auto make_unique_resource(R&& r, D&&d){
+	// TODO
+	//return unique_resource<
+}
+/*
+ template<typename R, typename D>
 unique_resource(R, D, bool)
 -> unique_resource<R, D>;
-
+*/
 template<typename MR, typename MD, typename S>
 [[nodiscard]]
 auto make_unique_resource_checked(MR &&r, const S &invalid, MD &&d)
@@ -436,7 +452,8 @@ noexcept(std::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
 ->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
 {
 	bool const mustrelease(r == invalid);
-	unique_resource resource{std::forward<MR>(r), std::forward<MD>(d),!mustrelease};
+	unique_resource<std::decay_t<MR>,std::decay_t<MD>>
+	  resource{std::forward<MR>(r), std::forward<MD>(d),!mustrelease};
 	return resource;
 
 }
