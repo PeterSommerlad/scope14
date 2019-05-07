@@ -8,3 +8,5 @@ need to re-establish factories for scope guards and `unique_resource` (done)
 need replacements for traits (semi-done, is_invokable missing might disable static asserts for the moment)
 
 need to make tests compile (plenty of work)
+
+replace if constexpr (quick hack strip constexpr, but need overload SFINAE again)
