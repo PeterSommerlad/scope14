@@ -46,15 +46,15 @@ SOFTWARE.
 #include <functional>
 
 #include <ostream>
-#include <filesystem>
 
 //#define CHECK_COMPILE_ERRORS
 
 using std::experimental::unique_resource;
+using std::experimental::make_unique_resource;
 using std::experimental::make_unique_resource_checked;
-using std::experimental::scope_exit;
-using std::experimental::scope_fail;
-using std::experimental::scope_success;
+using std::experimental::make_scope_exit;
+using std::experimental::make_scope_fail;
+using std::experimental::make_scope_success;
 
 void DemoFstream(){
 	{
@@ -69,23 +69,11 @@ void DemoFstream(){
 	}
 }
 
-using std::filesystem::path;
-void copy_file_transact(path const & from, path const & to) {
-   path t{to};
-   t += path{".deleteme"};
-   auto guard= scope_fail{ [t]{remove(t);} };
-   copy_file(from, t);
-   rename(t, to);
-}
-void DemonstrateTransactionFilecopy(){
-
-}
-
 
 
 std::string access_returned_from_string(size_t& len){
 	std::string s{"a string"};
-	scope_exit guard{[&]{ len = s.size();}};
+	auto guard=make_scope_exit([&]{ len = s.size();});
 	return std::move(s); // pessimize copy elision to demonstrate effect
 }
 void DemonstrateSurprisingReturnedFromBehavior(){
@@ -100,7 +88,7 @@ void DemonstrateSurprisingReturnedFromBehavior(){
 void InsaneBool() {
 	std::ostringstream out { };
 	{
-		auto guard = scope_exit([&] {out << "done\n";});
+		auto guard = make_scope_exit([&] {out << "done\n";});
 	}
 	ASSERT_EQUAL("done\n", out.str());
 }
@@ -108,18 +96,18 @@ void InsaneBool() {
 void testScopeExitWithCPP17DeducingCtors() {
 	std::ostringstream out { };
 	{
-		scope_exit guard([&] {out << "done\n";});
+		auto guard=make_scope_exit([&] {out << "done\n";});
 	}
 	ASSERT_EQUAL("done\n", out.str());
 }
 void testScopeFailWithCPP17DeducingCtors(){
 	std::ostringstream out { };
 	{
-		scope_fail guard([&] {out << "not done\n";});
+		auto guard=make_scope_fail([&] {out << "not done\n";});
 	}
 	ASSERT_EQUAL("",out.str());
 	try {
-		scope_fail guard([&] {out << "done\n";});
+		auto guard=make_scope_fail([&] {out << "done\n";});
 		throw 0;
 	} catch (const int) {
 	}
@@ -128,11 +116,11 @@ void testScopeFailWithCPP17DeducingCtors(){
 void testScopeSuccessWithCPP17DeducingCtors(){
 	std::ostringstream out { };
 	{
-		scope_success guard([&] {out << "done\n";});
+		auto guard=make_scope_success([&] {out << "done\n";});
 	}
 	ASSERT_EQUAL("done\n", out.str());
 	try {
-		scope_success guard([&] {out << "not done\n";});
+		auto guard=make_scope_success([&] {out << "not done\n";});
 		throw 0;
 	} catch(int){}
 	ASSERT_EQUAL("done\n", out.str());
@@ -142,8 +130,8 @@ void testScopeSuccessWithCPP17DeducingCtors(){
 void testDismissedGuard() {
 	std::ostringstream out { };
 	{
-		auto guard = scope_exit([&] {out << "done1\n";});
-		auto guard2dismiss = scope_exit([&] {out << "done2\n";});
+		auto guard = make_scope_exit([&] {out << "done1\n";});
+		auto guard2dismiss = make_scope_exit([&] {out << "done2\n";});
 		guard2dismiss.release();
 	}
 	ASSERT_EQUAL("done1\n", out.str());
@@ -151,8 +139,8 @@ void testDismissedGuard() {
 void testThrowDoesntCrashIt() { // LEWG wants it to crash!
 	std::ostringstream out { };
 	{
-		auto guard = scope_exit([&] {out << "done\n";});
-		auto guard1 = scope_exit([] {throw 42;});
+		auto guard = make_scope_exit([&] {out << "done\n";});
+		auto guard1 = make_scope_exit([] {throw 42;});
 		guard1.release(); // we no longer want throwing scope guards
 	}
 	ASSERT_EQUAL("done\n", out.str());
@@ -162,10 +150,11 @@ void testScopeExitWithReferenceWrapper(){
 	std::ostringstream out { };
 	const auto &lambda = [&] {out << "lambda done.\n";};
 	{
-		auto guard=scope_exit(std::cref(lambda));
+		auto guard=make_scope_exit(std::cref(lambda));
 	}
 	ASSERT_EQUAL("lambda done.\n",out.str());
 }
+
 struct non_assignable_resource{
 	non_assignable_resource()=default;
 	non_assignable_resource(int){}
@@ -173,16 +162,17 @@ struct non_assignable_resource{
 	non_assignable_resource& operator=(non_assignable_resource  &&) noexcept(false){ throw "buh";};
 	non_assignable_resource(non_assignable_resource  &&) =default;
 };
+#if 0
 void testscopeExitWithNonAssignableResourceAndReset(){
 	std::ostringstream out { };
 	const auto &lambda = [&](auto &&) {out << "lambda done.\n";};
 	{
-		auto guard=unique_resource(non_assignable_resource{},std::cref(lambda));
+		auto guard=make_unique_resource(non_assignable_resource{},std::cref(lambda));
 		//guard.reset(2);//throws... need to figure out, what I wanted to trigger here. AH, compile error?
 	}
 	ASSERT_EQUAL("lambda done.\n",out.str());
 }
-
+#endif
 
 
 // by Eric Niebler, adapted for unit testing
@@ -225,7 +215,7 @@ void testsFromEricNiebler_scope_exit_with_throwing_function_object(){
 	try
 	    {
 	        throwing_copy c{"called anyway",out};
-	        auto &&x = scope_exit(c); // -Wunused-variable on clang
+	        auto &&x = make_scope_exit(c); // -Wunused-variable on clang
 	        out << "whoops" << std::endl;
 	    }
 	    catch(...)
@@ -240,7 +230,7 @@ void testsFromEricNiebler_scope_success_with_throwing_function_object(){
 	try
 	    {
         throwing_copy c{"Oh noes!!!",out};
-        auto &&x = scope_success(c);// -Wunused-variable on clang
+        auto &&x = make_scope_success(c);// -Wunused-variable on clang
 	        out << "whoops" << std::endl;
 	    }
 	    catch(...)
@@ -255,7 +245,7 @@ void testsFromEricNiebler_scope_fail_with_throwing_function_object(){
 	try
 	    {
         throwing_copy c{"called because of exception!!!",out};
-        auto &&x = scope_fail(c);// -Wunused-variable on clang
+        auto &&x = make_scope_fail(c);// -Wunused-variable on clang
 	        out << "whoops" << std::endl;
 	    }
 	    catch(...)
@@ -269,7 +259,7 @@ void testsFromEricNiebler_scope_fail_with_throwing_function_object(){
 void testThrowOnUniqueResourceDoesntCrashIt() {
 	std::ostringstream out { };
 	{
-		auto guard = unique_resource(1, [&] (auto) {out << "done\n";});
+		auto guard = make_unique_resource(1, [&] (auto) {out << "done\n";});
 		// we do no longer allow that for unique_resource
 //		try {
 //			{
@@ -292,7 +282,7 @@ void testUniqueResourceSimple() {
 
 	const std::string msg { " deleted resource\n" };
 	{
-		auto res = unique_resource(std::ref(msg), [&out](string msg) {out << msg<<flush;});
+		auto res = make_unique_resource(std::ref(msg), [&out](string msg) {out << msg<<flush;});
 	}
 	ASSERT_EQUAL(msg, out.str());
 }
@@ -302,7 +292,7 @@ void testUniqueResourceByReference() {
 
 	const std::string msg { " deleted resource\n" };
 	{
-		auto res = unique_resource<std::string const &
+		auto res = make_unique_resource<std::string const &
 				,std::function<void(string)>>(msg, [&out](string msg) {out << msg<< flush;});
 	}
 	ASSERT_EQUAL(msg, out.str());
@@ -311,7 +301,7 @@ void testUniqueResourceByReference() {
 void test_unique_resource_semantics_reset() {
 	std::ostringstream out { };
 	{
-		auto cleanup = unique_resource(1, [&out](int i) {out << "cleaned " << i;});
+		auto cleanup = make_unique_resource(1, [&out](int i) {out << "cleaned " << i;});
 		cleanup.reset(2);
 	}
 	ASSERT_EQUAL("cleaned 1cleaned 2", out.str());
@@ -321,7 +311,7 @@ void demonstrate_unique_resource_with_stdio() {
 	const std::string filename = "hello.txt";
 	auto fclose=[](auto fptr){::fclose(fptr);};
 	{
-		auto file = unique_resource(::fopen(filename.c_str(), "w"), fclose);
+		auto file = make_unique_resource(::fopen(filename.c_str(), "w"), fclose);
 		::fputs("Hello World!\n", file.get());
 		ASSERT(file.get()!= NULL);
 	}
@@ -345,7 +335,7 @@ void demonstrate_unique_resource_with_stdio_Cpp17() {
 	auto fclose=[](auto fptr){::fclose(fptr);};
 
 	{
-		unique_resource file(::fopen(filename.c_str(), "w"), fclose);
+		auto file = make_unique_resource(::fopen(filename.c_str(), "w"), fclose);
 		::fputs("Hello World!\n", file.get());
 		ASSERT(file.get()!= NULL);
 	}
@@ -369,7 +359,7 @@ void demontrate_unique_resource_with_POSIX_IO() {
 	const std::string filename = "./hello1.txt";
 	auto close=[](auto fd){::close(fd);};
 	{
-		auto file = unique_resource(::open(filename.c_str(), O_CREAT | O_RDWR | O_TRUNC, 0666), close);
+		auto file = make_unique_resource(::open(filename.c_str(), O_CREAT | O_RDWR | O_TRUNC, 0666), close);
 
 		::write(file.get(), "Hello World!\n", 12u);
 		ASSERT(file.get() != -1);
@@ -510,7 +500,7 @@ void testReferenceWrapper(){
 	std::ostringstream out{};
 	int i{42};
 	{
-		auto uref=unique_resource(std::ref(i),[&out](int &j){out << "reference to "<<j++;});
+		auto uref=make_unique_resource(std::ref(i),[&out](int &j){out << "reference to "<<j++;});
 	}
 	ASSERT_EQUAL("reference to 42",out.str());
 	ASSERT_EQUAL(43,i);
@@ -521,12 +511,12 @@ void testReferenceWrapper(){
 void TalkToTheWorld(std::ostream& out, const std::string farewell = "Uff Wiederluege...") {
 	// Always say goodbye before returning,
 	// but if given a non-empty farewell message use it...
-	auto goodbye = scope_exit([&out]()
+	auto goodbye = make_scope_exit([&out]()
 	{
 		out << "Goodbye world..." << std::endl;
 	});
 	// must pass farewell by reference, otherwise it is not non-throw-moveconstructible
-	auto altgoodbye = scope_exit([&out,&farewell]()
+	auto altgoodbye = make_scope_exit([&out,&farewell]()
 	{
 		out << farewell << std::endl;
 	});
@@ -555,8 +545,8 @@ struct X {
 	}
 };
 void testCompilabilityGuardForNonPointerUniqueResource() {
-	auto x = unique_resource(X { }, [](X ) {});
-	unique_resource y(X { }, [](X ) {});
+	auto x = make:unique_resource(X { }, [](X ) {});
+	auut y = make_unique_resource(X { }, [](X ) {});
 #if defined(CHECK_COMPILE_ERRORS)
 	x->foo();// compile error!
 	*x; // compile error!
@@ -566,9 +556,9 @@ void testCompilabilityGuardForNonPointerUniqueResource() {
 
 }
 void testCompilabilityGuardForPointerTypes() {
-	auto x = unique_resource(new int { 42 }, [](int * ptr) {delete ptr;});
+	auto x = make_unique_resource(new int { 42 }, [](int * ptr) {delete ptr;});
 	ASSERT_EQUAL(42, *x);
-	auto y = unique_resource(new X { }, [](X * ptr) {delete ptr;});
+	auto y = make_unique_resource(new X { }, [](X * ptr) {delete ptr;});
 	y->foo(); // compiles, SFINAE works
 	(void)*y; // compiles, through SFINAE (again)
 	ASSERT_EQUAL(42,*(int*)(void*)x.get());
@@ -602,12 +592,12 @@ struct functor_move_copy_throws{
 void test_scope_exit_with_throwing_fun_copy(){
 	functor_copy_throws fun { };
 #if defined(CHECK_COMPILE_ERRORS)
-	auto x = scope_exit(std::move(fun)); // doesn't compile due to static_assert
-	auto x1 = scope_exit(42); // not callable
+	auto x = make_scope_exit(std::move(fun)); // doesn't compile due to static_assert
+	auto x1 = make_scope_exit(42); // not callable
 	auto const &ff=functor_copy_throws{};
-	auto z = scope_exit(std::ref(ff)); // hold by const reference
+	auto z = make_scope_exit(std::ref(ff)); // hold by const reference
 #endif
-	auto y = scope_exit(std::ref(fun)); // hold by reference
+	auto y = make_scope_exit(std::ref(fun)); // hold by reference
 	ASSERTM("should just work",true);
 }
 
@@ -615,18 +605,18 @@ void test_scope_exit_with_throwing_fun_move(){
 	functor_move_throws fun { };
 	const functor_move_throws &funref { fun };
 //#if defined(CHECK_COMPILE_ERRORS)
-	auto x = scope_exit(std::move(fun)); // no longer a compile error, because it is copied.
+	auto x = make_scope_exit(std::move(fun)); // no longer a compile error, because it is copied.
 //#endif
-	auto y = scope_exit(fun); // hold by copy
-	auto z = scope_exit(funref); // hold by copy?, no const ref
+	auto y = make_scope_exit(fun); // hold by copy
+	auto z = make_scope_exit(funref); // hold by copy?, no const ref
 	ASSERTM("should just work",true);
 }
 void test_scope_exit_with_throwing_fun_move_and_copy(){
 	functor_move_copy_throws fun { };
 #if defined(CHECK_COMPILE_ERRORS)
-	auto x = scope_exit(std::move(fun)); // compile error, because non-copyable
+	auto x = make_scope_exit(std::move(fun)); // compile error, because non-copyable
 #endif
-	auto y = scope_exit(std::ref(fun)); // hold by reference works
+	auto y = make_scope_exit(std::ref(fun)); // hold by reference works
 	ASSERTM("should not work",true);
 }
 
@@ -634,10 +624,10 @@ void test_scope_success_with_side_effect(){
 	std::ostringstream out{};
 	auto lam=[&]{out << "not called";};
 	try{
-		auto x=scope_success(lam); // lam not called
+		auto x=make_scope_success(lam); // lam not called
 		throw 42;
 	}catch(...){
-		auto y=scope_success([&]{out << "handled";});
+		auto y=make_scope_success([&]{out << "handled";});
 	}
 	ASSERT_EQUAL("handled",out.str());
 }
@@ -645,7 +635,7 @@ void test_scope_success_might_throw(){
 	std::ostringstream out{};
 	auto lam=[&]{out << "called"; /* throw 42;*/}; // doesn't work.
 	try{{
-		auto x=scope_success(lam);
+		auto x= make_scope_success(lam);
 		}
 		//out << " never ";
 	} catch (int) {
@@ -662,13 +652,13 @@ void demo_scope_exit_fail_success(){
 	std::ostringstream out{};
 	auto lam=[&]{out << "called ";};
 	try{
-		auto v=scope_exit([&]{out << "always ";});
-		auto w=scope_success([&]{out << "not ";}); // not called
-		auto x=scope_fail(lam); // called
+		auto v= make_scope_exit([&]{out << "always ";});
+		auto w= make_scope_success([&]{out << "not ";}); // not called
+		auto x= make_scope_fail(lam); // called
 		throw 42;
 	}catch(...){
-		auto y=scope_fail([&]{out << "not ";}); // not called
-		auto z=scope_success([&]{out << "handled";}); // called
+		auto y= make_scope_fail([&]{out << "not ";}); // not called
+		auto z= make_scope_success([&]{out << "handled";}); // called
 	}
 	ASSERT_EQUAL("called always handled",out.str());
 }
@@ -677,13 +667,13 @@ void demo_scope_exit_fail_success_Cpp17(){
 	std::ostringstream out{};
 	auto lam=[&]{out << "called ";};
 	try{
-		scope_exit v([&]{out << "always ";});
-		scope_success w([&]{out << "not ";}); // not called
-		scope_fail x(lam); // called
+		auto v=make_scope_exit([&]{out << "always ";});
+		auto w=make_scope_success([&]{out << "not ";}); // not called
+		auto x(lam); // called
 		throw 42;
-	}catch(...){
-		scope_fail y([&]{out << "not ";}); // not called
-		scope_success z([&]{out << "handled";}); // called
+	}catch=make_scope_fail(...){
+		auto y=make_scope_fail([&]{out << "not ";}); // not called
+		auto z=make_scope_success([&]{out << "handled";}); // called
 	}
 	ASSERT_EQUAL("called always handled",out.str());
 }
@@ -691,16 +681,16 @@ void demo_scope_exit_fail_success_Cpp17(){
 
 void test_scope_exit_lvalue_ref_passing_rvalue_fails_to_compile(){
 	using fun = void(*)();
-	auto y = scope_exit<const fun &>(fun(nullptr)); // no static assert needed. fails to match.
+	auto y = make_scope_exit<const fun &>(fun(nullptr)); // no static assert needed. fails to match.
 	y.release(); // avoid crash from calling nullptr
 	scope_exit<const fun&> z(fun(nullptr));
 	z.release();// avoid crash from calling nullptr
-	scope_exit zz(fun(nullptr));
+	auto zz(fun(nullptr));
 	zz.release();
 #if defined(CHECK_COMPILE_ERRORS)
-	auto x=scope_exit<fun  &>(fun(nullptr)); // no static assert needed. fails to match
+	auto x= make_scope_exit<fun  &>(fun=make_scope_exit(nullptr)); // no static assert needed. fails to match
 	std::experimental::scope_exit<const fun&> se { fun(nullptr) }; // static assert needed
-	scope_exit se17 { fun(nullptr) }; // static assert needed
+	auto se17 =make_scope_exit( fun(nullptr) }; // static assert needed
 #endif
 
 

@@ -56,7 +56,6 @@ struct is_callable_impl<R (*)(Args...)> : std::true_type {};
 
 template<typename R, typename... Args>
 struct is_callable_impl<R (&)(Args...)> : std::true_type {};
-
 template<typename T>
 using is_callable = std::integral_constant<bool, is_callable_impl<T>::value>;
 
