@@ -21,8 +21,8 @@ template<typename T>
 constexpr auto is_nothrow_move_assignable_v=std::is_nothrow_move_assignable<T>::value;
 template<typename T>
 constexpr auto is_nothrow_move_constructible_v=std::is_nothrow_move_constructible<T>::value;
-template<typename T>
-constexpr auto is_nothrow_constructible_v=std::is_nothrow_constructible<T>::value;
+template<typename T, typename S>
+constexpr auto is_nothrow_constructible_v=std::is_nothrow_constructible<T, S>::value;
 
 template<typename T>
 constexpr auto is_copy_constructible_v=std::is_copy_constructible<T>::value;
@@ -36,6 +36,23 @@ template<typename T>
 constexpr auto is_void_v=is_void<T>::value;
 
 // hack is_incallable that is close enough to is_invocable to be useful
+template <typename F, typename... Args>
+struct is_invocable :
+    std::is_constructible<
+        std::function<void(Args ...)>,
+        std::reference_wrapper<typename std::remove_reference<F>::type>
+    >
+{
+};
+
+template <typename R, typename F, typename... Args>
+struct is_invocable_r :
+    std::is_constructible<
+        std::function<R(Args ...)>,
+        std::reference_wrapper<typename std::remove_reference<F>::type>
+    >
+{
+};
 template<typename T>
 struct is_callable_impl
 {
@@ -43,7 +60,7 @@ struct is_callable_impl
     typedef char no_type[2];
 
     template <typename Q>
-    static yes_type& check(decltype(&Q::operator())*);
+    static yes_type& check(decltype(declval<Q>()())*);
 
     template <typename Q>
     static no_type& check(...);
@@ -61,7 +78,7 @@ using is_callable = std::integral_constant<bool, is_callable_impl<T>::value>;
 
 
 template<typename T>
-constexpr auto is_invocable_v=is_callable<T>::value;
+constexpr auto is_invocable_v=is_invocable<T>::value;
 
 template<typename T, typename... S>
 constexpr auto is_constructible_v=is_constructible<T,S...>::value;
@@ -486,13 +503,20 @@ public:
 
 };
 
-template<typename R, typename D>
+//template<typename R, typename D>
 //unique_resource(R, D)
 //-> unique_resource<R, D>;
+
+template<typename MR, typename MD>
 [[nodiscard]]
-auto make_unique_resource(R&& r, D&&d){
-	// TODO
-	//return unique_resource<
+auto make_unique_resource(MR&& r, MD&&d)
+noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
+		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
+->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
+{
+	return unique_resource<std::decay_t<MR>,std::decay_t<MD>>
+	{std::forward<MR>(r), std::forward<MD>(d)};
+
 }
 /*
  template<typename R, typename D>
