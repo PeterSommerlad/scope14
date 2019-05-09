@@ -49,13 +49,13 @@ SOFTWARE.
 
 //#define CHECK_COMPILE_ERRORS
 
-using std::experimental::unique_resource;
-using std::experimental::make_unique_resource;
-using std::experimental::make_unique_resource_checked;
-using std::experimental::make_scope_exit;
-using std::experimental::scope_exit;
-using std::experimental::make_scope_fail;
-using std::experimental::make_scope_success;
+using SCOPE_NS_PREFIX::unique_resource;
+using SCOPE_NS_PREFIX::make_unique_resource;
+using SCOPE_NS_PREFIX::make_unique_resource_checked;
+using SCOPE_NS_PREFIX::make_scope_exit;
+using SCOPE_NS_PREFIX::scope_exit;
+using SCOPE_NS_PREFIX::make_scope_fail;
+using SCOPE_NS_PREFIX::make_scope_success;
 
 void DemoFstream(){
 	{
@@ -715,9 +715,11 @@ struct deleter_2nd_throwing_copy {
 	void operator()(int const & ) const {
 		++deleted;
 	}
-	static inline int deleted{};
-	static inline int copied{};
+	static int deleted;
+	static int copied;
 };
+int deleter_2nd_throwing_copy::deleted{};
+int deleter_2nd_throwing_copy::copied{};
 
 void test_sometimes_throwing_deleter_copy_ctor(){
 	using uid=unique_resource<int,deleter_2nd_throwing_copy>;

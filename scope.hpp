@@ -12,10 +12,18 @@
 #include <limits> // for maxint
 #include <type_traits>
 
+#ifdef FOR_BOOST
+#define SCOPE_NS boost
+#define SCOPE_NS_END
+#define SCOPE_NS_PREFIX boost
+#else
 #define SCOPE_NS std { namespace experimental
 #define SCOPE_NS_END }
+#define SCOPE_NS_PREFIX std::experimental
+#endif
+namespace SCOPE_NS {
 
-namespace SCOPE_NS{
+// the following namespace contains variable templates simulation C++17 traits
 namespace _v {
 template<typename T>
 constexpr auto is_nothrow_move_assignable_v=std::is_nothrow_move_assignable<T>::value;
@@ -35,50 +43,24 @@ constexpr auto is_pointer_v=is_pointer<T>::value;
 template<typename T>
 constexpr auto is_void_v=is_void<T>::value;
 
-// hack is_incallable that is close enough to is_invocable to be useful
-template <typename F, typename... Args>
-struct is_invocable :
-    std::is_constructible<
-        std::function<void(Args ...)>,
-        std::reference_wrapper<typename std::remove_reference<F>::type>
-    >
-{
-};
+// this implementation just covers the use cases of this header
+template<typename ... ARGS>
+struct args;
+template<typename F, typename A, typename=void>
+struct is_invocable_light:std::false_type{};
 
-template <typename R, typename F, typename... Args>
-struct is_invocable_r :
-    std::is_constructible<
-        std::function<R(Args ...)>,
-        std::reference_wrapper<typename std::remove_reference<F>::type>
-    >
-{
-};
-template<typename T>
-struct is_callable_impl
-{
-    typedef char yes_type[1];
-    typedef char no_type[2];
+template<typename F>
+struct is_invocable_light<F,args<>,decltype(std::declval<std::decay_t<F>>()())>:std::true_type{};
 
-    template <typename Q>
-    static yes_type& check(decltype(declval<Q>()())*);
+template<typename F, typename R>
+struct is_invocable_light<F,args<R>,decltype(std::declval<std::decay_t<F>>()(std::declval<R>()))>:std::true_type{};
+template<typename ...T>
+constexpr auto is_invocable_v= false;
+template<typename F, typename R>
+constexpr auto is_invocable_v<F,R> =is_invocable_light<F,args<R> >::value;
+template<typename F>
+constexpr auto is_invocable_v<F> =is_invocable_light<F,args<> >::value;
 
-    template <typename Q>
-    static no_type& check(...);
-
-    static const bool value = sizeof(check<T>(0))==sizeof(yes_type);
-};
-
-template<typename R, typename... Args>
-struct is_callable_impl<R (*)(Args...)> : std::true_type {};
-
-template<typename R, typename... Args>
-struct is_callable_impl<R (&)(Args...)> : std::true_type {};
-template<typename T>
-using is_callable = std::integral_constant<bool, is_callable_impl<T>::value>;
-
-
-template<typename T>
-constexpr auto is_invocable_v=is_invocable<T>::value;
 
 template<typename T, typename... S>
 constexpr auto is_constructible_v=is_constructible<T,S...>::value;
@@ -86,11 +68,17 @@ template<typename T, typename S>
 constexpr auto is_convertible_v=std::is_convertible<T,S>::value;
 
 
+// the following simplifies the exception specification of the unique_resource factories
+// hopefully this eases compilation...
+template<typename MR, typename MD>
+constexpr bool are_nothrow_constructible_v=
+_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
+    		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>;
+
 }
 namespace detail {
 namespace hidden{
-
-// TODO: is_nothrow_assignable reimplementation
+struct factory_holder; // to enable hiding special ctor
 
 // should this helper be standardized? // write testcase where recognizable.
 template<typename T>
@@ -179,9 +167,6 @@ public:
 };
 
 
-
-
-
 // new policy-based exception proof design by Eric Niebler
 
 struct on_exit_policy
@@ -199,7 +184,7 @@ struct on_exit_policy
     }
 };
 
-// we cheat around by using 0 1 value of uncaught_exception() instead of the 17 uncaught_exceptions
+// we cheat for C++4 around by using 0 1 value of uncaught_exception() instead of the 17 uncaught_exceptions
 struct on_fail_policy
 {
     int ec_ { std::uncaught_exception() }; // just an approximization
@@ -236,13 +221,14 @@ class basic_scope_exit; // silence brain dead clang warning -Wmismatched-tags
 //PS: It would be nice if just the following would work in C++17
 //PS: however, we need a real class for template argument deduction
 //PS: and a deduction guide, because the ctors are partially instantiated
-//template<class EF>
-//using scope_exit = basic_scope_exit<EF, detail::on_exit_policy>;
-
 template<class EF>
-struct [[nodiscard]] scope_exit : basic_scope_exit<EF, detail::on_exit_policy>{
-	using basic_scope_exit<EF, detail::on_exit_policy>::basic_scope_exit;
-};
+using scope_exit = basic_scope_exit<EF, detail::on_exit_policy>;
+
+// C++17 CTAD requires real class:
+//template<class EF>
+//struct /*[[nodiscard]]*/ scope_exit : basic_scope_exit<EF, detail::on_exit_policy>{
+//	using basic_scope_exit<EF, detail::on_exit_policy>::basic_scope_exit;
+//};
 
 template <class EF>
 //scope_exit(EF) -> scope_exit<EF>;
@@ -250,13 +236,13 @@ inline auto make_scope_exit(EF&&ef){
 	return scope_exit<std::decay_t<EF>>(std::forward<EF>(ef));
 }
 
-//template<class EF>
-//using scope_fail = basic_scope_exit<EF, detail::on_fail_policy>;
-
 template<class EF>
-struct scope_fail : basic_scope_exit<EF, detail::on_fail_policy>{
-	using basic_scope_exit<EF, detail::on_fail_policy>::basic_scope_exit;
-};
+using scope_fail = basic_scope_exit<EF, detail::on_fail_policy>;
+
+//template<class EF>
+//struct scope_fail : basic_scope_exit<EF, detail::on_fail_policy>{
+//	using basic_scope_exit<EF, detail::on_fail_policy>::basic_scope_exit;
+//};
 
 template <class EF>
 //scope_fail(EF) -> scope_fail<EF>;
@@ -264,13 +250,13 @@ inline auto make_scope_fail(EF&&ef){
 	return scope_fail<std::decay_t<EF>>(std::forward<EF>(ef));
 }
 
-//template<class EF>
-//using scope_success = basic_scope_exit<EF, detail::on_success_policy>;
-
 template<class EF>
-struct scope_success : basic_scope_exit<EF, detail::on_success_policy>{
-	using basic_scope_exit<EF,detail::on_success_policy>::basic_scope_exit;
-};
+using scope_success = basic_scope_exit<EF, detail::on_success_policy>;
+
+//template<class EF>
+//struct scope_success : basic_scope_exit<EF, detail::on_success_policy>{
+//	using basic_scope_exit<EF,detail::on_success_policy>::basic_scope_exit;
+//};
 
 template <class EF>
 //scope_success(EF) -> scope_success<EF>;
@@ -297,9 +283,11 @@ struct _empty_scope_exit
 // Requires: EF is Callable
 // Requires: EF is nothrow MoveConstructible OR CopyConstructible
 template<class EF, class Policy /*= on_exit_policy*/>
-class [[nodiscard]] basic_scope_exit :  Policy
+class /*[[nodiscard]]*/ basic_scope_exit :  Policy
 {
 	static_assert(_v::is_invocable_v<EF>,"scope guard must be callable");
+	static_assert(_v::is_nothrow_move_constructible_v<EF>||_v::is_copy_constructible_v<EF>,
+			"EF must be copy constructible or nothrow move constructible");
     detail::_box<EF> exit_function;
 
 	static auto _make_failsafe(std::true_type, const void *)
@@ -364,7 +352,7 @@ class unique_resource
 
     static constexpr auto is_nothrow_delete_v=std::integral_constant<bool, noexcept(std::declval<D &>()(std::declval<R &>()))>::value;
 
-public://should be private
+private://should be private but cannot befriend the special factory.
     template<typename RR, typename DD,
         typename = std::enable_if_t<_v::is_constructible_v<detail::_box<R>, RR, detail::_empty_scope_exit> &&
                                     _v::is_constructible_v<detail::_box<D>, DD, detail::_empty_scope_exit>>>
@@ -375,30 +363,8 @@ public://should be private
       , deleter{std::forward<DD>(d),  make_scope_exit([&, this] {if (should_run) d(get());})}
 	  , execute_on_destruction { should_run }
     {}
-    // need help in making the factory a nice friend...
-    // the following two ICEs my g++ and gives compile errors about mismatche exception spec on clang7
-//    template<typename RM, typename DM, typename S>
-//    friend
-//    auto make_unique_resource_checked(RM &&r, const S &invalid, DM &&d)
-////    noexcept(noexcept(make_unique_resource(std::forward<RM>(r), std::forward<DM>(d))))
-//    ;
-    // the following as well: complains that its exception specification doesn't match its own exception specification in clang
-public:
-//    template<typename MR, typename MD, typename S>
-////	[[nodiscard]]
-//    friend
-//	auto make_unique_resource_checked(MR &&r, const S &invalid, MD &&d)
-//    noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
-//    		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
-//    ->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
-//			{
-//				bool const mustrelease(r == invalid);
-//				unique_resource resource{std::forward<MR>(r), std::forward<MD>(d),!mustrelease};
-//				return resource;
-//
-//			}
-//
-//;
+    friend struct detail::hidden::factory_holder;
+
 public:
     template<typename RR, typename DD,
         typename = std::enable_if_t<_v::is_constructible_v<detail::_box<R>, RR, detail::_empty_scope_exit> &&
@@ -418,6 +384,8 @@ public:
 		, execute_on_destruction(std::exchange(that.execute_on_destruction, false))
 		{ }
 
+/*
+ */
 	unique_resource &operator=(unique_resource &&that) noexcept(is_nothrow_delete_v &&
 			_v::is_nothrow_move_assignable_v<R> &&
 			_v::is_nothrow_move_assignable_v<D>)
@@ -429,19 +397,34 @@ public:
 				_v::is_copy_assignable_v<D>,
 				"The deleter must be nothrow-move assignable, or copy assignable");
 		if (&that != this) {
+			//			if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<R>>)
+			//				if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<D>>) {
+			//					resource = std::move(that.resource);
+			//					deleter = std::move(that.deleter);
+			//				} else {
+			//					deleter = _as_const(that.deleter);
+			//					resource = std::move(that.resource);
+			//				}
+			//			else if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<D>>) {
+			//				resource = _as_const(that.resource);
+			//				deleter = std::move(that.deleter);
+			//			} else {
+			//				resource = _as_const(that.resource);
+			//				deleter = _as_const(that.deleter);
+			//			}
 			reset();
-			if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<R>>)
-				if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<D>>) {
-					resource = std::move(that.resource);
-					deleter = std::move(that.deleter);
-				} else {
-					deleter = _as_const(that.deleter);
-					resource = std::move(that.resource);
-				}
-			else if constexpr (_v::is_nothrow_move_assignable_v<detail::_box<D>>) {
-				resource = _as_const(that.resource);
-				deleter = std::move(that.deleter);
-			} else {
+			if(std::is_nothrow_move_assignable<detail::_box<R>>::value)
+			{
+				deleter = _move_assign_if_noexcept(that.deleter);
+				resource = _move_assign_if_noexcept(that.resource);
+			}
+			else if(std::is_nothrow_move_assignable<detail::_box<D>>::value)
+			{
+				resource = _move_assign_if_noexcept(that.resource);
+				deleter = _move_assign_if_noexcept(that.deleter);
+			}
+			else
+			{
 				resource = _as_const(that.resource);
 				deleter = _as_const(that.deleter);
 			}
@@ -449,7 +432,8 @@ public:
 		}
 		return *this;
 	}
-    ~unique_resource() //noexcept(is_nowthrow_delete_v) // removed deleter must not throw
+
+    ~unique_resource()
     {
         reset();
     }
@@ -502,38 +486,54 @@ public:
 	unique_resource(const unique_resource &) = delete;
 
 };
+namespace detail{
+namespace hidden {
+struct factory_holder{
+	template<typename MR, typename MD>
+	static
+	auto special_maker(MR&& r, MD&& d, bool shouldrun){
+		 unique_resource<std::decay_t<MR>,std::decay_t<MD>>
+		  resource{std::forward<MR>(r), std::forward<MD>(d),shouldrun};
+		 return resource;
+	}
+};
+}
+}
+
 
 //template<typename R, typename D>
 //unique_resource(R, D)
 //-> unique_resource<R, D>;
 
 template<typename MR, typename MD>
-[[nodiscard]]
+/*[[nodiscard]]*/
 auto make_unique_resource(MR&& r, MD&&d)
-noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
-		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
+noexcept(_v::are_nothrow_constructible_v<MR,MD>)
+//noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
+//		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
 ->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
 {
 	return unique_resource<std::decay_t<MR>,std::decay_t<MD>>
 	{std::forward<MR>(r), std::forward<MD>(d)};
 
 }
+
 /*
  template<typename R, typename D>
 unique_resource(R, D, bool)
 -> unique_resource<R, D>;
 */
 template<typename MR, typename MD, typename S>
-[[nodiscard]]
+/*[[nodiscard]]*/
 auto make_unique_resource_checked(MR &&r, const S &invalid, MD &&d)
-noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
-		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
+noexcept(_v::are_nothrow_constructible_v<MR,MD>)
+//noexcept(_v::is_nothrow_constructible_v<std::decay_t<MR>,MR> &&
+//		_v::is_nothrow_constructible_v<std::decay_t<MD>,MD>)
 ->unique_resource<std::decay_t<MR>,std::decay_t<MD>>
 {
 	bool const mustrelease(r == invalid);
-	unique_resource<std::decay_t<MR>,std::decay_t<MD>>
-	  resource{std::forward<MR>(r), std::forward<MD>(d),!mustrelease};
-	return resource;
+	auto resource =  detail::hidden::factory_holder::special_maker(std::forward<MR>(r), std::forward<MD>(d),!mustrelease);
+	return resource; // NRVO
 
 }
 
